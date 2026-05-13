@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.env
+*.log
+leader/atr/
+partners/*/certs/
+*.pem
+*.key
+*.crt
+config.toml
+!config.example.toml
+.DS_Store
+venv/
+.venv/
