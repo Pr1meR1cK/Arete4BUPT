@@ -1,0 +1,75 @@
+{
+  "aic": "待注册获取",
+  "active": true,
+  "protocolVersion": "02.00",
+  "name": "请假助手",
+  "description": "请假助手（Partner）。职责：为北京邮电大学学生处理课程相关请假/休学事务，生成请假申请、说明审批流程、列出所需材料、区分病假/事假/公假场景。范围：仅限校内课程请假及休学。明确拒绝：① 校外机构请假；② 非课程类请假（如社团活动请假）；③ 选课/缓考/考试提醒等其他业务（交对应助手处理）。混合请求时保留请假可执行部分并说明拒绝项。",
+  "version": "1.0.0",
+  "provider": {
+    "organization": "北京邮电大学",
+    "department": "人工智能学院",
+    "url": "https://www.bupt.edu.cn"
+  },
+  "securitySchemes": {
+    "mtls": {
+      "type": "mutualTLS",
+      "description": "智能体间 mTLS 双向认证",
+      "x-caChallengeBaseUrl": "http://117.74.66.90:8003/acps-atr-v2"
+    }
+  },
+  "endPoints": [
+    {
+      "url": "https://localhost:59222/rpc",
+      "transport": "JSONRPC",
+      "security": [{ "mtls": [] }]
+    }
+  ],
+  "capabilities": {
+    "streaming": false,
+    "notification": false
+  },
+  "defaultInputModes": ["text/plain"],
+  "defaultOutputModes": ["text/plain", "application/json"],
+  "skills": [
+    {
+      "id": "leave_request.leave-application",
+      "name": "请假申请生成",
+      "description": "根据请假类型（病假/事假/公假）和时长，生成请假申请内容，说明审批流程。",
+      "version": "1.0.0",
+      "tags": ["请假", "申请", "审批流程"],
+      "examples": [
+        "我需要请3天病假，该怎么操作",
+        "公假参加比赛怎么申请",
+        "家里有急事需要请事假"
+      ],
+      "inputModes": ["text/plain"],
+      "outputModes": ["text/plain", "application/json"]
+    },
+    {
+      "id": "leave_request.material-checklist",
+      "name": "材料清单",
+      "description": "根据请假类型列出所需提交的材料清单。",
+      "version": "1.0.0",
+      "tags": ["材料", "证明", "请假材料"],
+      "examples": [
+        "请病假需要提供什么证明",
+        "事假需要什么材料"
+      ],
+      "inputModes": ["text/plain"],
+      "outputModes": ["text/plain", "application/json"]
+    },
+    {
+      "id": "leave_request.suspension-guidance",
+      "name": "休学办理指引",
+      "description": "为需要休学的学生说明办理流程、所需材料和注意事项。",
+      "version": "1.0.0",
+      "tags": ["休学", "办理流程"],
+      "examples": [
+        "休学怎么办理，需要什么条件",
+        "因病需要休学一学期怎么办"
+      ],
+      "inputModes": ["text/plain"],
+      "outputModes": ["text/plain", "application/json"]
+    }
+  ]
+}
