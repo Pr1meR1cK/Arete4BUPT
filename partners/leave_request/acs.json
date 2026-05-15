@@ -1,75 +1,90 @@
 {
-  "aic": "待注册获取",
-  "active": true,
-  "protocolVersion": "02.00",
-  "name": "请假助手",
-  "description": "请假助手（Partner）。职责：为北京邮电大学学生处理课程相关请假/休学事务，生成请假申请、说明审批流程、列出所需材料、区分病假/事假/公假场景。范围：仅限校内课程请假及休学。明确拒绝：① 校外机构请假；② 非课程类请假（如社团活动请假）；③ 选课/缓考/考试提醒等其他业务（交对应助手处理）。混合请求时保留请假可执行部分并说明拒绝项。",
-  "version": "1.0.0",
-  "provider": {
-    "organization": "北京邮电大学",
-    "department": "人工智能学院",
-    "url": "https://www.bupt.edu.cn"
-  },
-  "securitySchemes": {
-    "mtls": {
-      "type": "mutualTLS",
-      "description": "智能体间 mTLS 双向认证",
-      "x-caChallengeBaseUrl": "http://117.74.66.90:8003/acps-atr-v2"
-    }
-  },
-  "endPoints": [
-    {
-      "url": "https://localhost:59222/rpc",
-      "transport": "JSONRPC",
-      "security": [{ "mtls": [] }]
-    }
+  "agent_name": "校园请假助手",
+  "agent_code": "leave_request_agent",
+  "role": "partner",
+  "version": "0.1.0",
+  "description": "校园请假助手是面向北邮校园场景的 Partner Agent，可处理病假、事假、公假相关咨询，按参考高校常见学生事务流程生成材料清单、审批流程、风险提醒和正式中文请假申请草稿，并支持缺失信息追问。它适合被个人课程助手、学生事务助手、Leader Agent、跨组校园服务智能体通过 RPC 调用，用于课程缺勤、竞赛公假、病假材料准备等场景的协作处理。",
+  "limitations": [
+    "不能代替学校、学院或辅导员进行审批",
+    "不能真实提交请假申请",
+    "不能伪造证明材料",
+    "不能保证审批结果",
+    "只提供北邮风格模拟流程和申请草稿",
+    "具体要求以学校实际系统和学院通知为准"
   ],
-  "capabilities": {
-    "streaming": false,
-    "notification": false
-  },
-  "defaultInputModes": ["text/plain"],
-  "defaultOutputModes": ["text/plain", "application/json"],
   "skills": [
-    {
-      "id": "leave_request.leave-application",
-      "name": "请假申请生成",
-      "description": "根据请假类型（病假/事假/公假）和时长，生成请假申请内容，说明审批流程。",
-      "version": "1.0.0",
-      "tags": ["请假", "申请", "审批流程"],
-      "examples": [
-        "我需要请3天病假，该怎么操作",
-        "公假参加比赛怎么申请",
-        "家里有急事需要请事假"
-      ],
-      "inputModes": ["text/plain"],
-      "outputModes": ["text/plain", "application/json"]
-    },
-    {
-      "id": "leave_request.material-checklist",
-      "name": "材料清单",
-      "description": "根据请假类型列出所需提交的材料清单。",
-      "version": "1.0.0",
-      "tags": ["材料", "证明", "请假材料"],
-      "examples": [
-        "请病假需要提供什么证明",
-        "事假需要什么材料"
-      ],
-      "inputModes": ["text/plain"],
-      "outputModes": ["text/plain", "application/json"]
-    },
-    {
-      "id": "leave_request.suspension-guidance",
-      "name": "休学办理指引",
-      "description": "为需要休学的学生说明办理流程、所需材料和注意事项。",
-      "version": "1.0.0",
-      "tags": ["休学", "办理流程"],
-      "examples": [
-        "休学怎么办理，需要什么条件",
-        "因病需要休学一学期怎么办"
-      ],
-      "inputModes": ["text/plain"],
-      "outputModes": ["text/plain", "application/json"]
-    }
+    "leave_type_detection",
+    "material_checklist_generation",
+    "approval_flow_guidance",
+    "leave_application_drafting",
+    "missing_information_questioning",
+    "official_leave_for_competition",
+    "sick_leave_guidance",
+    "personal_leave_guidance"
+  ],
+  "interfaces": {
+    "health": "GET /health",
+    "acs": "GET /acs",
+    "rpc": "POST /rpc",
+    "analyze": "POST /leave/analyze",
+    "draft": "POST /leave/draft"
+  },
+  "input_fields": [
+    "student_name",
+    "student_id",
+    "college",
+    "leave_type",
+    "reason",
+    "start_time",
+    "end_time",
+    "duration",
+    "activity_name",
+    "organizer",
+    "has_proof",
+    "contact",
+    "affected_courses",
+    "source_agent_name",
+    "source_aic"
+  ],
+  "output_fields": [
+    "leave_type",
+    "leave_type_label",
+    "completeness_score",
+    "extracted_fields",
+    "required_materials",
+    "approval_flow",
+    "draft_application",
+    "reminders",
+    "risk_notes",
+    "next_questions",
+    "local_policy_note"
+  ],
+  "tags": [
+    "校园",
+    "北邮",
+    "BUPT",
+    "请假",
+    "病假",
+    "事假",
+    "公假",
+    "竞赛公假",
+    "审批",
+    "材料",
+    "申请草稿",
+    "学生事务",
+    "课程缺勤",
+    "辅导员",
+    "学院",
+    "任课教师"
+  ],
+  "examples": [
+    "我发烧了想请三天病假，需要什么材料？",
+    "我要参加大学生创新创业比赛，怎么申请公假？",
+    "家里有事要请假两天，帮我写申请。",
+    "下周有事不能上课，请假流程是什么？",
+    "帮我生成一份请假条。",
+    "参加竞赛和课程冲突了，可以申请公假吗？",
+    "病假需要医院证明吗？",
+    "请假要先找辅导员还是任课老师？"
   ]
 }

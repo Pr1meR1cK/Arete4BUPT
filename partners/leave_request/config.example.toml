@@ -1,28 +1,28 @@
-[llm.fast]
-api_type = "openai"
-api_key = "YOUR_API_KEY"
-base_url = "https://api.your-llm.com/v1/"
-model = "your-fast-model"
-
-[llm.default]
-api_type = "openai"
-api_key = "YOUR_API_KEY"
-base_url = "https://api.your-llm.com/v1/"
-model = "your-default-model"
-
-[server]
+[agent]
+name = "校园请假助手"
+code = "leave_request_agent"
+role = "partner"
+aic = "PLEASE_REPLACE_WITH_REAL_AIC"
 host = "0.0.0.0"
 port = 59222
+version = "0.1.0"
+local_demo_mode = true
 
-[server.mtls]
-tls_enabled = true
-verify_client = true
-cert_file = "certs/server.crt"
-key_file = "certs/server.key"
-ca_file = "certs/ca.crt"
+[acps]
+atr_server = "http://117.74.66.90:8002"
+adp_server = "http://117.74.66.90:8005"
+ca_server = "http://117.74.66.90:8003"
+footprint_url = "http://117.74.66.90:8006/notify"
 
-[concurrency]
-max_concurrent_tasks = 10
+[security]
+cert_file = "./certs/agent.crt"
+key_file = "./certs/agent.key"
+ca_file = "./certs/ca.crt"
+enable_mtls = false
 
-[log]
-level = "INFO"
+[llm]
+enabled = false
+base_url = ""
+api_key = ""
+model = "qwen3-8b"
+timeout = 30
