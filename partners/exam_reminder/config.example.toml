@@ -26,3 +26,7 @@ max_concurrent_tasks = 10
 
 [log]
 level = "INFO"
+
+[reminder]
+default_reminder_days = 3
+min_gap_minutes = 60         # 考试间隔少于60分钟视为“间隔紧张”
