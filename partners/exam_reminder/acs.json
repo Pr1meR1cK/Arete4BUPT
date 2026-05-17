@@ -1,6 +1,7 @@
 {
-  "aic": "待注册获取",
+  "aic": "exam-reminder-partner",
   "active": true,
+  "lastModifiedTime": "2026-05-16T10:00:00+08:00",
   "protocolVersion": "02.00",
   "name": "考试提醒助手",
   "description": "考试提醒助手（Partner）。职责：为北京邮电大学学生提供考试时间查询、多门考试冲突检测、考前DDL提醒、考场信息推送、个人考试日历管理。范围：仅限校内课程考试。明确拒绝：① 非考试类日程（如上课提醒、作业DDL）；② 补考/重修安排；③ 选课/请假/缓考等其他业务（交对应助手处理）。混合请求时保留考试提醒可执行部分并说明拒绝项。",
@@ -14,7 +15,7 @@
     "mtls": {
       "type": "mutualTLS",
       "description": "智能体间 mTLS 双向认证",
-      "x-caChallengeBaseUrl": "http://117.74.66.90:8003/acps-atr-v2"
+      "x-caChallengeBaseUrl": "https://spellbind-hankering-apply.ngrok-free.dev/acps-atr-v1"
     }
   },
   "endPoints": [
@@ -26,7 +27,8 @@
   ],
   "capabilities": {
     "streaming": false,
-    "notification": false
+    "notification": false,
+    "messageQueue": []
   },
   "defaultInputModes": ["text/plain"],
   "defaultOutputModes": ["text/plain", "application/json"],
@@ -40,6 +42,19 @@
       "examples": [
         "这学期有哪些考试，分别在什么时候",
         "算法考试是哪天，在哪个考场"
+      ],
+      "inputModes": ["text/plain"],
+      "outputModes": ["text/plain", "application/json"]
+    },
+    {
+      "id": "exam_reminder.exam-location",
+      "name": "考场信息查询",
+      "description": "查询具体考试的教学楼、教室、座位号等考场安排信息。",
+      "version": "1.0.0",
+      "tags": ["考场", "教室", "座位", "地点"],
+      "examples": [
+        "算法考试在哪个教室？",
+        "帮我查一下数据库考试的考场和座位号"
       ],
       "inputModes": ["text/plain"],
       "outputModes": ["text/plain", "application/json"]
@@ -66,6 +81,19 @@
       "examples": [
         "提醒我下周一有算法考试",
         "每次考试提前3天提醒我"
+      ],
+      "inputModes": ["text/plain"],
+      "outputModes": ["text/plain", "application/json"]
+    },
+    {
+      "id": "exam_reminder.exam-calendar",
+      "name": "个人考试日历",
+      "description": "将考试安排导出为个人日历，支持生成文本日历或 iCal 格式，方便导入手机/电脑日历。",
+      "version": "1.0.0",
+      "tags": ["日历", "导出", "iCal", "日程管理"],
+      "examples": [
+        "把我的考试安排生成一个日历",
+        "导出这学期考试日历到手机"
       ],
       "inputModes": ["text/plain"],
       "outputModes": ["text/plain", "application/json"]
