@@ -3,7 +3,7 @@
 import uuid
 import time
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, Union
 
 
 class TaskStatus:
@@ -59,7 +59,7 @@ class SessionManager:
     def __init__(self):
         self._sessions: dict[str, Session] = {}
 
-    def get_or_create(self, session_id: str | None = None) -> Session:
+    def get_or_create(self, session_id: Optional[str] = None) -> Session:
         if session_id and session_id in self._sessions:
             return self._sessions[session_id]
         sid = session_id or str(uuid.uuid4())[:8]
@@ -68,7 +68,7 @@ class SessionManager:
         return session
 
 
-_instance: SessionManager | None = None
+_instance: Optional[SessionManager] = None
 
 
 def get_session_manager() -> SessionManager:

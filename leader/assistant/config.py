@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import logging
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +52,7 @@ class AppConfig:
         return self.raw.get("uvicorn", {}).get("host", "0.0.0.0")
 
 
-_CONFIG: AppConfig | None = None
+_CONFIG: Optional[AppConfig] = None
 
 
 def get_config() -> AppConfig:

@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+from typing import Optional
 
 from .session import Session, Task, TaskStatus, get_session_manager
 from .llm_client import chat, chat_json
@@ -188,7 +189,7 @@ async def aggregate(session: Session, task: Task, user_message: str) -> str:
 
 # ═════════════════ 主编排入口 ═════════════════
 
-async def orchestrate(session_id: str | None, user_message: str) -> dict:
+async def orchestrate(session_id: Optional[str], user_message: str) -> dict:
     """从收到用户消息到返回最终结果的主流程."""
     sm = get_session_manager()
     session = sm.get_or_create(session_id)
