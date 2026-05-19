@@ -1,6 +1,6 @@
 """
 Arete4BUPT Partner Agent — 考试提醒助手 (FastAPI)
-增强版：深度冲突检测、多提醒点、日历导出、API Key 环境变量、结构化日志、健康检查
+AIP v02.00 合规版：提醒支持、超时机制、状态转移修正
 """
 import asyncio
 import json
@@ -81,6 +81,7 @@ try:
     reminder_config = config.get("reminder", {})
     DEFAULT_REMINDER_DAYS = reminder_config.get("default_reminder_days", 3)
     MIN_GAP_MINUTES = reminder_config.get("min_gap_minutes", 60)
+    TASK_TIMEOUT_MINUTES = reminder_config.get("task_timeout_minutes", 30)
 except Exception as e:
     logger.critical(f"读取 config.toml 失败: {e}")
     raise
@@ -118,10 +119,8 @@ DB_PATH = BASE_DIR / "task_store.db"
 
 tasks: Dict[str, TaskResult] = {}
 task_inputs: Dict[str, List[str]] = {}
+task_timers: Dict[str, asyncio.Task] = {}  # 超时定时器
 db_lock = asyncio.Lock()
-
-reminder_messages: List[str] = []
-SPECIAL_TASK_ID = "task-reminders"
 
 
 async def init_db():
@@ -159,8 +158,10 @@ async def load_active_tasks():
                 task_inputs[task_id] = inputs
                 logger.info(f"恢复任务: {task_id} (state={state})")
                 if state in ('accepted', 'working'):
-                    logger.info(f"重新启动任务 {task_id} 的后台执行流程")
                     asyncio.create_task(execute_task_lifecycle(task_id))
+                # 重新设置超时计时器（如果任务处于等待状态）
+                if state in ('awaiting-input', 'awaiting-completion'):
+                    start_timeout_timer(task_id)
             except Exception as e:
                 logger.warning(f"恢复任务 {task_id} 失败: {e}")
     logger.info(f"已恢复 {len(tasks)} 个活跃任务")
@@ -227,6 +228,10 @@ TERMINAL_STATES = {
 def cleanup_context(task_id: str):
     if task_id in task_inputs:
         del task_inputs[task_id]
+    # 取消超时定时器
+    if task_id in task_timers:
+        task_timers[task_id].cancel()
+        del task_timers[task_id]
 
 
 # ---------------------------------------------------------------------------
@@ -263,6 +268,37 @@ async def call_llm(prompt_system: str, prompt_user: str) -> str:
     )
     logger.info("LLM 调用成功")
     return response.choices[0].message.content
+
+
+# ---------------------------------------------------------------------------
+# 超时机制
+# ---------------------------------------------------------------------------
+async def timeout_task(task_id: str):
+    """等待超时后自动取消任务"""
+    await asyncio.sleep(TASK_TIMEOUT_MINUTES * 60)
+    task = tasks.get(task_id)
+    if task and task.status.state in (TaskState.AwaitingInput, TaskState.AwaitingCompletion):
+        logger.info(f"任务 {task_id} 超时，自动取消")
+        task.status = TaskStatus(
+            state=TaskState.Canceled,
+            stateChangedAt=datetime.now(timezone.utc).isoformat(),
+            dataItems=[TextDataItem(text="任务超时，自动取消")]
+        )
+        await save_task(task_id)
+        cleanup_context(task_id)
+
+
+def start_timeout_timer(task_id: str):
+    """为等待状态的任务启动超时计时器"""
+    if task_id in task_timers:
+        task_timers[task_id].cancel()
+    task_timers[task_id] = asyncio.create_task(timeout_task(task_id))
+
+
+def cancel_timeout_timer(task_id: str):
+    if task_id in task_timers:
+        task_timers[task_id].cancel()
+        del task_timers[task_id]
 
 
 # ---------------------------------------------------------------------------
@@ -323,15 +359,12 @@ def build_analysis_input(task_id: str, new_input: str) -> str:
 
 
 def sanitize_time_range(tr: Any) -> Optional[List[str]]:
-    """将各种表示转换为 ['YYYY-MM-DD', 'YYYY-MM-DD']"""
     if not tr:
         return None
     if isinstance(tr, str):
         tr = tr.strip()
-        # 单日
         if re.match(r"^\d{4}-\d{2}-\d{2}$", tr):
             return [tr, tr]
-        # 两个日期：YYYY-MM-DD 分隔符 YYYY-MM-DD
         m = re.search(r"(\d{4}-\d{2}-\d{2})\s*[到至\-～~,，]+\s*(\d{4}-\d{2}-\d{2})", tr)
         if m:
             d1, d2 = m.group(1), m.group(2)
@@ -430,19 +463,19 @@ def query_exams(course_names=None, time_range=None):
 def detect_conflicts(exams, min_gap_minutes=60):
     conflicts = []
     tight_gaps = []
+    # 将内嵌函数移到外部以提高性能
+    def to_minutes(exam):
+        h, m = map(int, exam["start_time"].split(":"))
+        return h * 60 + m
+    def to_end_minutes(exam):
+        h, m = map(int, exam["end_time"].split(":"))
+        return h * 60 + m
+
     for i in range(len(exams)):
         for j in range(i + 1, len(exams)):
             e1, e2 = exams[i], exams[j]
             if e1["exam_date"] != e2["exam_date"]:
                 continue
-
-            def to_minutes(exam):
-                h, m = map(int, exam["start_time"].split(":"))
-                return h * 60 + m
-
-            def to_end_minutes(exam):
-                h, m = map(int, exam["end_time"].split(":"))
-                return h * 60 + m
 
             start1, end1 = to_minutes(e1), to_end_minutes(e1)
             start2, end2 = to_minutes(e2), to_end_minutes(e2)
@@ -479,9 +512,30 @@ def generate_csv(exams):
     return "\n".join(rows)
 
 
+def build_reminder_messages(reminder_days: Union[int, List[int]], course_filter: str = None) -> List[str]:
+    if isinstance(reminder_days, int):
+        reminder_days = [reminder_days]
+    now = datetime.now()
+    today_str = now.strftime("%Y-%m-%d")
+    messages = []
+    exams = load_exam_data().get("exams", [])
+    for e in exams:
+        exam_date = e["exam_date"]
+        if exam_date < today_str:
+            continue
+        if course_filter and course_filter not in e["course_name"]:
+            continue
+        days_left = (datetime.strptime(exam_date, "%Y-%m-%d") - now).days
+        if days_left in reminder_days or days_left == 1 or days_left == 0:
+            msg = f"🔔 {e['course_name']} 考试将在 {days_left} 天后（{exam_date} {e['start_time']}-{e['end_time']}）于 {e['location']} 座位 {e['seat']} 进行。"
+            messages.append(msg)
+    return messages
+
+
 async def process_production(params: dict) -> str:
     export_calendar = params.get("export_calendar", False)
     export_format = params.get("export_format", "ical")
+    is_reminder = params.get("is_reminder", False)
     course_names = params.get("course_names", ["所有课程"])
     time_range = params.get("time_range")
     reminder_days = params.get("reminder_days", DEFAULT_REMINDER_DAYS)
@@ -490,7 +544,16 @@ async def process_production(params: dict) -> str:
 
     exams = query_exams(course_names, time_range)
     if not exams:
+        if is_reminder:
+            return "未来一段时间内没有需要关注的考试，放松一下吧！"
         return f"在指定条件（课程: {course_names}, 时间: {time_range}）下未找到考试安排。"
+
+    # 如果是纯粹的提醒查询，直接生成简洁的提醒列表
+    if is_reminder:
+        msgs = build_reminder_messages(reminder_days)
+        if not msgs:
+            return "未来一段时间内没有需要关注的考试。"
+        return "📌 **近期考试提醒**\n" + "\n".join(msgs)
 
     if export_calendar:
         if export_format == "csv":
@@ -523,22 +586,29 @@ async def process_production(params: dict) -> str:
 # ---------------------------------------------------------------------------
 async def execute_task_lifecycle(task_id: str):
     try:
-        tasks[task_id].status = TaskStatus(
+        task = tasks.get(task_id)
+        if not task:
+            return
+        # 确保进入 Working 状态
+        task.status = TaskStatus(
             state=TaskState.Working,
             stateChangedAt=datetime.now(timezone.utc).isoformat(),
-            dataItems=tasks[task_id].status.dataItems,
+            dataItems=task.status.dataItems,
         )
         await save_task(task_id)
 
-        user_inputs = task_inputs[task_id]
+        user_inputs = task_inputs.get(task_id, [])
+        if not user_inputs:
+            raise ValueError("缺少用户输入")
         analysis = await process_analysis(task_id, user_inputs[-1])
 
         if not analysis["is_ready"]:
-            tasks[task_id].status = TaskStatus(
+            task.status = TaskStatus(
                 state=TaskState.AwaitingInput,
                 stateChangedAt=datetime.now(timezone.utc).isoformat(),
                 dataItems=[TextDataItem(text=q) for q in analysis["questions"]],
             )
+            start_timeout_timer(task_id)  # 启动超时
         else:
             output = await process_production(analysis["params"])
             product = Product(
@@ -546,85 +616,38 @@ async def execute_task_lifecycle(task_id: str):
                 name="exam_reminder_result",
                 dataItems=[TextDataItem(text=output)],
             )
-            tasks[task_id].status = TaskStatus(
+            task.status = TaskStatus(
                 state=TaskState.AwaitingCompletion,
                 stateChangedAt=datetime.now(timezone.utc).isoformat(),
                 dataItems=None,
             )
-            tasks[task_id].products = [product]
+            task.products = [product]
+            start_timeout_timer(task_id)  # 启动超时
 
         await save_task(task_id)
 
     except Exception as e:
         logger.error(f"任务 {task_id} 执行失败: {e}", exc_info=True)
-        tasks[task_id].status = TaskStatus(
-            state=TaskState.Failed,
-            stateChangedAt=datetime.now(timezone.utc).isoformat(),
-            dataItems=[TextDataItem(text=f"处理失败: {str(e)}")],
-        )
-        await save_task(task_id)
-        cleanup_context(task_id)
-
-
-# ---------------------------------------------------------------------------
-# 提醒生成函数
-# ---------------------------------------------------------------------------
-def parse_reminder_days(raw: str) -> List[int]:
-    days = []
-    for part in raw.split(","):
-        try:
-            days.append(int(part.strip()))
-        except ValueError:
-            pass
-    return days if days else [DEFAULT_REMINDER_DAYS]
-
-
-def build_reminder_messages(reminder_days: Union[int, List[int]], course_filter: str = None) -> List[str]:
-    if isinstance(reminder_days, int):
-        reminder_days = [reminder_days]
-    now = datetime.now()
-    today_str = now.strftime("%Y-%m-%d")
-    messages = []
-    exams = load_exam_data().get("exams", [])
-    for e in exams:
-        exam_date = e["exam_date"]
-        if exam_date < today_str:
-            continue
-        if course_filter and course_filter not in e["course_name"]:
-            continue
-        days_left = (datetime.strptime(exam_date, "%Y-%m-%d") - now).days
-        if days_left in reminder_days or days_left == 1 or days_left == 0:
-            msg = f"🔔 {e['course_name']} 考试将在 {days_left} 天后（{exam_date} {e['start_time']}-{e['end_time']}）于 {e['location']} 座位 {e['seat']} 进行。"
-            messages.append(msg)
-    return messages
-
-
-# ---------------------------------------------------------------------------
-# 后台提醒循环
-# ---------------------------------------------------------------------------
-async def reminder_loop():
-    global reminder_messages
-    while True:
-        await asyncio.sleep(60)
-        reminder_messages = build_reminder_messages(DEFAULT_REMINDER_DAYS)
-        reminder_task = tasks.get(SPECIAL_TASK_ID)
-        if reminder_task:
-            product = Product(
-                id=f"product-reminder-{uuid.uuid4()}",
-                name="reminder_list",
-                dataItems=[TextDataItem(text="\n".join(reminder_messages) or "暂无近期考试提醒")],
-            )
-            reminder_task.products = [product]
-            reminder_task.status = TaskStatus(
-                state=TaskState.AwaitingCompletion,
+        if task_id in tasks:
+            tasks[task_id].status = TaskStatus(
+                state=TaskState.Failed,
                 stateChangedAt=datetime.now(timezone.utc).isoformat(),
+                dataItems=[TextDataItem(text=f"处理失败: {str(e)}")],
             )
+            await save_task(task_id)
+        cleanup_context(task_id)
 
 
 # ---------------------------------------------------------------------------
 # 命令处理器
 # ---------------------------------------------------------------------------
 async def on_start(command: TaskCommand, task: Optional[TaskResult]) -> TaskResult:
+    # 如果 taskId 已存在（无论状态），忽略重复 Start
+    if command.taskId and command.taskId in tasks:
+        existing = tasks[command.taskId]
+        logger.info(f"任务 {command.taskId} 已存在，忽略重复 Start")
+        return existing
+
     user_input = command.dataItems[0].text if command.dataItems else ""
 
     try:
@@ -656,7 +679,7 @@ async def on_start(command: TaskCommand, task: Optional[TaskResult]) -> TaskResu
 
 
 async def on_continue(command: TaskCommand, task: TaskResult) -> TaskResult:
-    if task is None or task.status.state != TaskState.AwaitingInput:
+    if task is None or task.status.state not in (TaskState.AwaitingInput, TaskState.AwaitingCompletion):
         logger.warning(f"忽略 Continue，任务 {command.taskId} 状态 {task.status.state if task else 'None'}")
         return task
 
@@ -673,22 +696,15 @@ async def on_continue(command: TaskCommand, task: TaskResult) -> TaskResult:
     task_inputs.setdefault(command.taskId, []).append(new_input)
     await save_task(command.taskId)
 
-    analysis = await process_analysis(command.taskId, new_input)
-    if not analysis["is_ready"]:
-        questions = analysis.get("questions", ["请提供更详细的信息"])
-        result = create_task_result(command, TaskState.AwaitingInput, questions=questions)
-    else:
-        output = await process_production(analysis["params"])
-        product = Product(
-            id=f"product-{uuid.uuid4()}",
-            name="exam_reminder_result",
-            dataItems=[TextDataItem(text=output)],
-        )
-        result = create_task_result(command, TaskState.AwaitingCompletion, products=[product])
-
-    tasks[command.taskId] = result
+    # 返回 Working 状态，后台异步执行
+    working_result = create_task_result(command, TaskState.Working)
+    working_result.taskId = command.taskId
+    working_result.sessionId = task.sessionId
+    tasks[command.taskId] = working_result
     await save_task(command.taskId)
-    return result
+
+    asyncio.create_task(execute_task_lifecycle(command.taskId))
+    return working_result
 
 
 async def on_complete(command: TaskCommand, task: TaskResult) -> TaskResult:
@@ -718,33 +734,6 @@ async def on_cancel(command: TaskCommand, task: TaskResult) -> TaskResult:
 
 
 async def on_get(command: TaskCommand, task: TaskResult) -> TaskResult:
-    if task is None:
-        return None
-    if command.taskId == SPECIAL_TASK_ID:
-        custom_days = None
-        course_filter = None
-        for item in command.dataItems or []:
-            if item.text.startswith("reminder_days:"):
-                try:
-                    raw = item.text.split(":", 1)[1]
-                    custom_days = parse_reminder_days(raw)
-                except Exception:
-                    pass
-            elif item.text.startswith("course_filter:"):
-                course_filter = item.text.split(":", 1)[1].strip()
-        days = custom_days if custom_days else [DEFAULT_REMINDER_DAYS]
-        msgs = build_reminder_messages(days, course_filter)
-        task.products = [
-            Product(
-                id=f"product-reminder-{uuid.uuid4()}",
-                name="reminder_list",
-                dataItems=[TextDataItem(text="\n".join(msgs) or "暂无近期考试提醒")],
-            )
-        ]
-        task.status = TaskStatus(
-            state=TaskState.AwaitingCompletion,
-            stateChangedAt=datetime.now(timezone.utc).isoformat(),
-        )
     return task
 
 
@@ -764,33 +753,7 @@ handlers = CommandHandlers(
 async def lifespan(app: FastAPI):
     await init_db()
     await load_active_tasks()
-
-    if SPECIAL_TASK_ID not in tasks:
-        dummy_command = TaskCommand(
-            id="init-reminder",
-            sentAt=datetime.now(timezone.utc).isoformat(),
-            command=TaskCommandType.Start,
-            taskId=SPECIAL_TASK_ID,
-            sessionId="reminder-session",
-            senderRole="leader",
-            senderId="system",
-            dataItems=[],
-        )
-        reminder_task = create_task_result(dummy_command, TaskState.AwaitingCompletion)
-        reminder_task.taskId = SPECIAL_TASK_ID
-        reminder_task.products = [
-            Product(
-                id="product-init",
-                name="reminder_list",
-                dataItems=[TextDataItem(text="暂无近期考试提醒")],
-            )
-        ]
-        tasks[SPECIAL_TASK_ID] = reminder_task
-        logger.info("已创建特殊提醒任务 task-reminders")
-
     asyncio.create_task(cleanup_old_tasks())
-    asyncio.create_task(reminder_loop())
-
     yield
 
 
@@ -827,7 +790,7 @@ async def handle_rpc(request: RpcRequest) -> RpcResponse:
             logger.warning(f"不支持的命令: {command.command}")
             result = None
 
-        if result is not None and command.taskId != SPECIAL_TASK_ID:
+        if result is not None:
             tasks[command.taskId] = result
         return RpcResponse(id=request.id, result=result)
 
@@ -845,7 +808,7 @@ async def handle_rpc(request: RpcRequest) -> RpcResponse:
 
 
 # ---------------------------------------------------------------------------
-# 健康检查（增强）
+# 健康检查
 # ---------------------------------------------------------------------------
 @app.get("/health")
 async def health():
